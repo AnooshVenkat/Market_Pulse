@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Price Predictor</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Stock Price Predictor 📈</h1>
+            <p>Select a stock to predict its closing price for the upcoming week.</p>
+        </header>
+        
+        <main>
+            <div class="controls">
+                <div class="select-group">
+                    <label for="industry-select">Industry</label>
+                    <select id="industry-select"><option value="">-- Select an Industry --</option></select>
+                </div>
+                <div class="select-group">
+                    <label for="stock-select">Company</label>
+                    <select id="stock-select" disabled><option value="">-- Select a Company --</option></select>
+                </div>
+                <button id="predict-btn" disabled>Predict</button>
+            </div>
+            
+            <div id="results-container" class="hidden">
+                <div id="loader" class="hidden"></div>
+                <div id="results-content"></div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const industrySelect = document.getElementById('industry-select');
+        const stockSelect = document.getElementById('stock-select');
+        const predictBtn = document.getElementById('predict-btn');
+        const resultsContainer = document.getElementById('results-container');
+        const resultsContent = document.getElementById('results-content');
+        const loader = document.getElementById('loader');
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const response = await fetch('/get_industries');
+                const industries = await response.json();
+                industries.forEach(industry => { industrySelect.add(new Option(industry, industry)); });
+            } catch (error) { console.error("Failed to load industries:", error); }
+        });
+
+        industrySelect.addEventListener('change', async () => {
+            const industry = industrySelect.value;
+            stockSelect.innerHTML = '<option value="">-- Select a Company --</option>';
+            stockSelect.disabled = true; predictBtn.disabled = true;
+            if (!industry) return;
+            try {
+                const response = await fetch(`/get_stocks?industry=${encodeURIComponent(industry)}`);
+                const stocks = await response.json();
+                stocks.forEach(stock => { stockSelect.add(new Option(`${stock.name} (${stock.ticker})`, stock.ticker)); });
+                stockSelect.disabled = false;
+            } catch (error) { console.error("Failed to load stocks:", error); }
+        });
+
+        stockSelect.addEventListener('change', () => { predictBtn.disabled = !stockSelect.value; });
+
+        predictBtn.addEventListener('click', async () => {
+            const ticker = stockSelect.value;
+            if (!ticker) return;
+            
+            resultsContainer.classList.remove('hidden');
+            resultsContent.innerHTML = '';
+            loader.classList.remove('hidden');
+
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ticker: ticker })
+                });
+                if (!response.ok) throw new Error((await response.json()).error || 'Something went wrong');
+                
+                const data = await response.json();
+                displayResults(data);
+            } catch (error) {
+                resultsContent.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            } finally {
+                loader.classList.add('hidden');
+            }
+        });
+        
+        function displayResults(data) {
+            const { model_performance, prediction, plot_price_image, plot_sentiment_image, plot_merged_image } = data;
+            const predictionClass = prediction.direction === 'HIGHER' ? 'positive' : 'negative';
+
+            const priceImageHTML = plot_price_image
+                ? `<img src="data:image/png;base64,${plot_price_image}" alt="Stock Price Plot">`
+                : `<div class="plot-error">Could not generate price plot.</div>`;
+            
+            const sentimentImageHTML = plot_sentiment_image
+                ? `<img src="data:image/png;base64,${plot_sentiment_image}" alt="Sentiment Score Plot">`
+                : `<div class="plot-error">Could not generate sentiment plot.</div>`;
+            
+            const mergedImageHTML = plot_merged_image
+                ? `<img src="data:image/png;base64,${plot_merged_image}" alt="Merged Analysis Plot">`
+                : `<div class="plot-error">Could not generate merged plot.</div>`;
+
+
+            resultsContent.innerHTML = `
+                <div class="results-grid">
+                    <div class="card">
+                        <h3>Model Prediction</h3>
+                        <p class="prediction ${predictionClass}">${prediction.direction}</p>
+                        <p>Confidence: <strong>${(prediction.confidence * 100).toFixed(2)}%</strong></p>
+                    </div>
+                    <div class="card">
+                        <h3>Model Performance</h3>
+                        <p>Test Accuracy: <strong>${(model_performance.test_accuracy * 100).toFixed(2)}%</strong></p>
+                        <p>Validation Gap: <strong>${(model_performance.validation_gap * 100).toFixed(2)}%</strong></p>
+                    </div>
+
+                    <div class="card card-full">
+                        <h3>Price History (Last 30 Days)</h3>
+                        ${priceImageHTML}
+                    </div>
+                    <div class="card card-full">
+                        <h3>Sentiment History (Last 30 Days)</h3>
+                        ${sentimentImageHTML}
+                    </div>
+                    <div class="card card-full">
+                        <h3>Price vs. Sentiment Analysis</h3>
+                        ${mergedImageHTML}
+                    </div>
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>
